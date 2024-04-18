@@ -10,6 +10,7 @@ from arch import arch_model
 # Full path to the 'repo' directory
 repo_dir = ''
 data_file = 'data/portfolio.csv'
+output_dir = '/output'
 
 def load_data(data_file):
     OPEN_FILE = os.path.join(repo_dir, 'portfolio.csv')
@@ -134,11 +135,14 @@ def plot_breach_clustering(breaches, dates):
     plt.grid(True)
     plt.show()
 
+
 def test_breach_independence(breaches):
-    """Calculate the autocorrelation of breaches to test for independence."""
     from statsmodels.tsa.stattools import acf
-    autocorr = acf(breaches, fft=True, nlags=1)[1]  # Only look at the first lag
-    return {'autocorrelation': autocorr}
+    autocorr_results = {}
+    for asset in breaches.columns:
+        autocorr = acf(breaches[asset], fft=True, nlags=1)[1]  # Only look at the first lag
+        autocorr_results[asset] = autocorr
+    return autocorr_results
 
 def apply_stress_test(returns, stress_factors):
     stressed_returns = returns.copy()
@@ -154,7 +158,7 @@ def calculate_stressed_var_es(returns, weights, confidence_level):
     VaR, ES = compute_VAR_ES_normal(portfolio_var, confidence_level)
     return VaR, ES
 
-def compute_multi_day_var(returns, days, confidence_level):
+def compute_multi_day_var_check(returns, days, confidence_level):
     # Calculate daily VaR and scale it by square root of days
     daily_var = historical_simulation(returns, confidence_level)[0]
     multi_day_var = daily_var * np.sqrt(days)
@@ -167,12 +171,6 @@ def compare_shortfalls(returns, VaR, ES):
     print(f"Expected Shortfall: {ES}, Average Actual Shortfall: {average_actual_shortfall}")
     return average_actual_shortfall
 
-def plot_distribution_fits(returns):
-    sns.histplot(returns, kde=True, stat="density", linewidth=0)
-    plt.show()
-    sm.qqplot(returns, line ='45')
-    plt.show()
-
 
 def estimate_covariance(data, window=None):
     if window is not None:
@@ -180,8 +178,23 @@ def estimate_covariance(data, window=None):
     return data.cov()
 
 
-def sensitivity_analysis(data, periods, weights, confidence_level=0.975):
+def calculate_covariance_matrices(data, periods):
+    covariance_results = {}
+
+    for period in periods:
+        # Subset data for the specified period
+        period_data = data.tail(period)  # Ensure this subsetting is correct
+        returns = log_returns(period_data)        # Calculate log returns for the period data
+        cov_matrix = returns.cov()        # Calculate covariance matrix from the returns
+        covariance_results[period] = cov_matrix   # Store the covariance matrix in the dictionary with the period as the key
+
+    return covariance_results
+
+
+def calculate_var_es_for_periods(data, periods, weights, confidence_level=0.975):
     results = {}
+    normal_results = {}
+
     for period in periods:
         # Subset data for the specified period
         period_data = data.tail(period)  # Ensure this subsetting is correct
@@ -194,78 +207,124 @@ def sensitivity_analysis(data, periods, weights, confidence_level=0.975):
         portfolio_var, _ = compute_portfolio_var(returns, current_weights)  # Use recalculated returns and weights
         VaR, ES = compute_VAR_ES_normal(portfolio_var, confidence_level)
         results[period] = (VaR, ES)
+        normal_results[period] = (VaR, ES)
 
-    return results
+    return results, normal_results
 
 
-def plot_normal_fit(returns):
-    mean, std = np.mean(returns), np.std(returns)
+def plot_data_analysis(returns, plot_type='hist', asset=None):
     plt.figure(figsize=(10, 6))
-    sns.histplot(returns, kde=False, stat="density", linewidth=0)
-    xmin, xmax = plt.xlim()
-    x = np.linspace(xmin, xmax, 100)
-    p = norm.pdf(x, mean, std)
-    plt.plot(x, p, 'k', linewidth=2)
-    title = "Fit results: mu = %.2f,  std = %.2f" % (mean, std)
-    plt.title(title)
-    plt.show()
 
+    if plot_type == 'hist':
+        sns.histplot(returns, kde=False, stat="density", linewidth=0, color='blue', label='Histogram')
+        mean, std = np.mean(returns), np.std(returns)
+        xmin, xmax = plt.xlim()
+        x = np.linspace(xmin, xmax, 100)
+        p = norm.pdf(x, mean, std)
+        plt.plot(x, p, 'k', linewidth=2, label='Normal Fit')
+        plt.title(f'Histogram and Normal Fit for {asset}')
+        plt.legend()
 
-def plot_qq(returns):
-    sm.qqplot(returns, line='45')
-    plt.show()
+    elif plot_type == 'qq':
+        sm.qqplot(returns, line='45', fit=True)
+        plt.title(f'QQ Plot for {asset}')
+
+    if asset:
+        filename = f'{asset}_{plot_type}_plot.png'
+    else:
+        filename = f'default_{plot_type}_plot.png'
+
+    plt.savefig(os.path.join(output_dir, filename))
+
+    # Close the figure to free up memory and avoid overlap on subsequent plots
+    plt.close()
 
 
 if __name__ == '__main__':
     # Define the output directory
     output_dir = os.path.join(repo_dir, 'output')
 
+    ### Bullet 1 ### Data prep
+
     # Load and prepare data
     data = load_data(data_file)
     returns = log_returns(data)
     weights = compute_risk_parity_weights(returns)
 
+    ### Bullet 2.1 ### Normal Distribution
     # Plot and save log returns
     plot_returns(returns)
 
-    periods = [252, 756, 1260]  # Example periods in trading days (1 year, 2 years, 3 years)
-    sensitivity_results = sensitivity_analysis(data, periods, weights, include_stressed=False)
-    sensitivity_results_stressed = sensitivity_analysis(data, periods, weights, include_stressed=True)
+    periods = [252, 756, 1260]  # Example periods in trading days (1 year, 3 years, 5 years)
+    results, normal_results = calculate_var_es_for_periods(data, periods, weights)
+    covariance_results = calculate_covariance_matrices(data, periods)
 
     # Print results to see how they differ
     print("Normal Conditions:")
-    for period, (VaR, ES) in sensitivity_results.items():
-        print(f"For {period} days: VaR = {VaR}, ES = {ES}")
-    print("Stressed Conditions:")
-    for period, (VaR, ES) in sensitivity_results_stressed.items():
+    for period, (VaR, ES) in results.items():
         print(f"For {period} days: VaR = {VaR}, ES = {ES}")
 
     # Distribution Fits and QQ Plots
     for asset in returns.columns:  # Example assets
-        plot_normal_fit(returns[asset])
-        plot_qq(returns[asset])
+        plot_data_analysis(returns[asset], plot_type='qq', asset=asset)
 
-    # Historical Simulation
+
+    ### Bullet 2.2 ### student-t distribution
+    portfolio_var, _ = compute_portfolio_var(returns, weights)
+
+    dof_values = [3, 4, 5, 6]    # Define the degrees of freedom
+    var_es_results = {}     # Initialize a dictionary to store the results
+
+    # Loop over the degrees of freedom
+    for dof in dof_values:
+        # Compute VaR and ES for the current degree of freedom
+        VaR, ES = compute_VAR_ES_t(portfolio_var, 0.975, dof)
+
+        # Store the results in the dictionary
+        var_es_results[dof] = (VaR, ES)
+
+    # Print the results
+    for dof, (VaR, ES) in var_es_results.items():
+        print(f"For dof = {dof}: VaR = {VaR}, ES = {ES}")
+
+
+    ### Bullet 2.3 ### Historical Simulation
     VaR_hist, ES_hist = historical_simulation(returns, 0.975)
     print(f"Historical Simulation VaR: {VaR_hist}, ES: {ES_hist}")
+
+    ### Bullet 2.4 ### Constant Conditional Correlation method (GARCH(1,1), normal innovations for risk factor
 
     # GARCH and Constant Correlation
     models = ccc_garch(returns, weights)
     VaR_ccc, ES_ccc = compute_var_es_ccc(models, np.eye(len(returns.columns)), 0.975)
     print(f"CCC GARCH VaR: {VaR_ccc}, ES: {ES_ccc}")
 
+    ### Bullet 2.5 ### Filtered Historical Simulation method with EWMA for each risk factor.
     # Filtered Historical Simulation
     VaR_fhs, ES_fhs = filtered_historical_simulation(returns, 0.94, 0.975)  # Example lambda=0.94
     print(f"Filtered Historical Simulation VaR: {VaR_fhs}, ES: {ES_fhs}")
 
+
+    ### Bullet 3 ### backtesting VaR and ES. Plots.
     # Backtesting
-    num_breaches, breaches = count_var_breaches(returns.iloc[:, 0], VaR_normal)
-    print(f"Number of VaR breaches: {num_breaches}")
-    plot_breach_clustering(breaches, returns.index)
+    breaches = count_var_breaches(returns, VaR_hist)[1]
 
     # Independence Test
     independence_results = test_breach_independence(breaches)
-    print(f"Autocorrelation of breaches: {independence_results['autocorrelation']}")
+    for asset, autocorr in independence_results.items():
+        print(f"Autocorrelation of breaches for {asset}: {autocorr}")
+
+    ### Bullet 4 ### Empirical 5 day VaR and 10 day VaR, using historical simulation method. compare with sq root rule
+
+    ##################### multi day var here!!!!!!!!!!!!!!!!
+
+    # Multi-day VaR Check
+    VaR_5day = compute_multi_day_var_check(returns, 5, 0.975)
+    VaR_10day = compute_multi_day_var_check(returns, 10, 0.975)
+    print(f"5-Day VaR: {VaR_5day}, 10-Day VaR: {VaR_10day}")
+
+
+    ### Bullet 5 ### Stress testing
 
     # Stress Testing
     stress_factors = {
@@ -277,14 +336,13 @@ if __name__ == '__main__':
     stressed_VaR, stressed_ES = calculate_stressed_var_es(stressed_returns, weights, 0.975)
     print(f"Stressed VaR: {stressed_VaR}, Stressed ES: {stressed_ES}")
 
-    # Multi-day VaR
-    VaR_5day = compute_multi_day_var(returns, 5, 0.975)
-    VaR_10day = compute_multi_day_var(returns, 10, 0.975)
-    print(f"5-Day VaR: {VaR_5day}, 10-Day VaR: {VaR_10day}")
-
     # Shortfall Comparison
-    compare_shortfalls(returns.iloc[:, 0], VaR_normal, ES_normal)
+    #compare_shortfalls(returns.iloc[:, 0], VaR_normal, ES_normal)
 
-    # Distribution Fits
-    plot_distribution_fits(returns.iloc[:, 0])
+    # Distribution Fits for all assets using the new function
+    for asset in returns.columns:
+        plot_data_analysis(returns[asset], plot_type='hist', asset=asset)
+
+
+    ### Bullet 6 ### check canvas for announcement extra shit
 
