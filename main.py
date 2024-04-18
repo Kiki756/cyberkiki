@@ -3,15 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import statsmodels.api as sm
 from scipy.stats import norm, t
-import arch
 from arch import arch_model
-
 
 # Full path to the 'repo' directory
 repo_dir = ''
 data_file = 'data/portfolio.csv'
-
 
 def load_data(data_file):
     OPEN_FILE = os.path.join(repo_dir, 'portfolio.csv')
@@ -29,8 +27,10 @@ def log_returns(data):
     selected_columns = ['Gold USD', 'Gold EUR', 'JPM Close', 'SP500', 'Siemens Close', 'XR', 'EUROSTOXX Close']
     data_selected = data[selected_columns].copy()
     returns = np.log(data_selected / data_selected.shift(1)).dropna()
+    returns = 100 *  returns
 
     return returns
+
 
 def compute_risk_parity_weights(returns):
     # Calculate the annualized volatility for each asset
@@ -47,6 +47,7 @@ def plot_returns(returns):
     plt.savefig(os.path.join(output_dir, 'log_returns.png'))
     # plt.show()
 
+
 def compute_portfolio_var(returns, weights):
     cov_matrix = returns.cov()    # Calculate covariance matrix
     portfolio_var = np.dot(weights.T, np.dot(cov_matrix, weights))    # Calculate portfolio variance
@@ -59,22 +60,35 @@ def compute_VAR_ES_normal(portfolio_var, confidence_level):
     ES = norm.expect(lambda x: x, loc=0, scale=np.sqrt(portfolio_var), lb=norm.ppf(1 - confidence_level))
     return VaR, ES
 
+
 def compute_VAR_ES_t(portfolio_var, confidence_level, df):
+    # VaR using the Student-t distribution
     VaR_t = t.ppf(1 - confidence_level, df) * np.sqrt(portfolio_var)
-    ES_t = t.expect(lambda x: x, df=df, loc=0, scale=np.sqrt(portfolio_var), lb=t.ppf(1 - confidence_level, df))
+
+    # ES using the Student-t distribution (requires integration or a more explicit form)
+    # We need to compute the expected shortfall as the expected return on the tail of the distribution.
+    x = np.linspace(t.ppf(0.001, df), t.ppf(0.999, df), 1000)
+    pdf = t.pdf(x, df)
+    cdf = t.cdf(x, df)
+    conditional_loss = x * pdf / (1 - t.cdf(t.ppf(1 - confidence_level, df), df))
+    ES_t = (conditional_loss.sum() / len(x)) * np.sqrt(portfolio_var)
+
     return VaR_t, ES_t
 
 def historical_simulation(returns, confidence_level):
-    sorted_returns = np.sort(returns)
+    aggregated_returns = returns.sum(axis=1)  # Summing returns across all columns for each row
+    sorted_returns = np.sort(aggregated_returns)
     index = int((1 - confidence_level) * len(sorted_returns))
     VaR = -sorted_returns[index]
     ES = -sorted_returns[:index].mean()
     return VaR, ES
 
 def ccc_garch(returns):
+    scaled_returns = returns
+    #scaled_returns = returns * 100  # Scaling by a factor of 100
     models = {}
-    for column in returns.columns:
-        model = arch_model(returns[column], mean='Zero', vol='GARCH', p=1, q=1)
+    for column in scaled_returns.columns:
+        model = arch_model(scaled_returns[column], mean='Zero', vol='GARCH', p=1, q=1)
         res = model.fit(update_freq=10, disp='off')
         models[column] = res
     return models
@@ -90,14 +104,21 @@ def compute_var_es_ccc(models, correlation_matrix, confidence_level):
     ES = norm.expect(lambda x: x, loc=0, scale=np.sqrt(portfolio_var), lb=norm.ppf(1 - confidence_level))
     return VaR, ES
 
+
 def filtered_historical_simulation(returns, lambda_, confidence_level):
-    weights = np.full(len(returns), lambda_)
-    weights = np.power(weights, np.arange(len(returns))[::-1])
+    n = len(returns)
+    weights = np.full(n, lambda_)
+    weights = np.power(weights, np.arange(n)[::-1])
     weights /= weights.sum()
-    sorted_returns = np.sort(returns * np.sqrt(weights))
+
+    # Applying weights across each column (asset)
+    weighted_returns = returns.multiply(weights, axis=0)  # Use DataFrame.multiply to apply weights per row
+
+    sorted_returns = weighted_returns.sum(
+        axis=1).sort_values()  # Sum weighted returns across assets for each time point and sort
     index = int((1 - confidence_level) * len(sorted_returns))
-    VaR = -sorted_returns[index]
-    ES = -sorted_returns[:index].mean()
+    VaR = -sorted_returns.iloc[index]
+    ES = -sorted_returns.iloc[:index].mean()
     return VaR, ES
 
 def count_var_breaches(returns, VaR):
@@ -169,6 +190,7 @@ def plot_distribution_fits(returns):
     sm.qqplot(returns, line ='45')
     plt.show()
 
+
 if __name__ == '__main__':
     # Define the output directory
     output_dir = os.path.join(repo_dir, 'output')
@@ -184,7 +206,12 @@ if __name__ == '__main__':
     # Calculate and print VaR and ES using different methods
     portfolio_var, cov_matrix = compute_portfolio_var(returns, weights)
     VaR_normal, ES_normal = compute_VAR_ES_normal(portfolio_var, confidence_level=0.975)
-    VaR_t, ES_t = compute_VAR_ES_t(portfolio_var, confidence_level=.975, df=5)  # Example: df=5 for t-distribution
+    VaR_normal, ES_normal = compute_VAR_ES_normal(portfolio_var, confidence_level=0.99)
+
+    VaR_t, ES_t = compute_VAR_ES_t(portfolio_var, confidence_level=.975, df=3)  # df=3 for t-distribution
+    VaR_t, ES_t = compute_VAR_ES_t(portfolio_var, confidence_level=.975, df=4)  # df=4 for t-distribution
+    VaR_t, ES_t = compute_VAR_ES_t(portfolio_var, confidence_level=.975, df=5)  # df=5 for t-distribution
+    VaR_t, ES_t = compute_VAR_ES_t(portfolio_var, confidence_level=.975, df=6)  # df=6 for t-distribution
 
     print(f"Normal Distribution VaR: {VaR_normal}, ES: {ES_normal}")
     print(f"Student-t Distribution VaR: {VaR_t}, ES: {ES_t}")
