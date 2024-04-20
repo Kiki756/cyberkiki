@@ -185,6 +185,19 @@ def rolling_var(data, confidence_level, dof, method, window=252):
 
     return rolling_vars
 
+
+def rolling_var_normal(returns, window_size, confidence_level):
+    # Calculate the rolling standard deviation for the portfolio returns
+    rolling_std = returns.rolling(window=window_size).std()
+
+    # Calculate the z-score for the specified confidence level
+    z_score = norm.ppf(1 - confidence_level)
+
+    # Calculate the rolling VaR
+    rolling_var = -rolling_std * z_score
+
+    # VaR is typically a positive number when representing a loss
+    return rolling_var.abs()  # use abs() to convert to positive if needed
 def plot_returns_with_var(returns, var_series):
 
     plt.figure(figsize=(12, 8))
@@ -233,6 +246,14 @@ if __name__ == '__main__':
     #plot_data_analysis(data, weights, returns, plot_type='qq')
 
 
+    # Assuming 'returns' is a DataFrame of log returns for the portfolio
+    window_size = 252  # 252 trading days is typically used for a 1-year rolling window
+    confidence_level = 0.99  # 95% confidence level
+
+    # Call the function with your returns DataFrame
+    portfolio_returns = returns.sum(axis=1)  # Sum across assets for portfolio returns if needed
+    rolling_var_values = rolling_var_normal(portfolio_returns, window_size, confidence_level)
+    plot_returns_with_var(returns, rolling_var_values)
 
     ###################################################################################################################
     ###################################################################################################################
@@ -252,8 +273,8 @@ if __name__ == '__main__':
 
 
     ### Bullet 2.3 ### Historical Simulation
-    var_series = 100/(np.sqrt(252))*rolling_var(returns, confidence_level=0.975, method='normal')
-    plot_returns_with_var(returns, var_series)
+    #var_series = 100/(np.sqrt(252))*rolling_var(returns, confidence_level=0.975, method='normal')
+    #plot_returns_with_var(returns, var_series)
 
 
     ### Bullet 2.4 ### Constant Conditional Correlation method (GARCH(1,1), normal innovations for risk factor
