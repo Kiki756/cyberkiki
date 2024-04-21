@@ -8,7 +8,7 @@ directory = r'C:\Users\kikin.DESKTOP-G4LR6A7\OneDrive\Documenten\Kiki\VU Econome
 
 csv_files = [os.path.join(directory, file) for file in os.listdir(directory) if file.endswith('.csv')]
 
-# Dictionaru to store the dataframes
+# Dictionary to store the dataframes
 dfs = {}
 
 # Loop through csv files 

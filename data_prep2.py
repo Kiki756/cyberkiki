@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
+data_file = 'data/portfolio.csv'
+
 OPEN_FILE = 'combined_portfolio2.csv'
 
 data = pd.read_csv(OPEN_FILE, index_col=0)

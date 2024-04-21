@@ -248,7 +248,7 @@ if __name__ == '__main__':
 
     # Assuming 'returns' is a DataFrame of log returns for the portfolio
     window_size = 252  # 252 trading days is typically used for a 1-year rolling window
-    confidence_level = 0.99  # 95% confidence level
+    confidence_level = 0.99  # confidence level
 
     # Call the function with your returns DataFrame
     portfolio_returns = returns.sum(axis=1)  # Sum across assets for portfolio returns if needed
