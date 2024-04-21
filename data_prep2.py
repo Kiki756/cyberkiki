@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
-data_file = 'data/portfolio.csv'
+data_file = 'portfolio.csv'
 
 OPEN_FILE = 'combined_portfolio2.csv'
 
